@@ -17,7 +17,7 @@
         .menu-btn span { color: var(--primary); }
         #camera-wrapper { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; margin-bottom: 15px; }
         #camera-stream { width: 100%; display: block; }
-        .page-badge { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; padding: 6px 12px; border-radius: 15px; font-size: 0.9rem; font-weight: bold; }
+        .page-badge { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; padding: 6px 12px; border-radius: 15px; font-size: 0.9rem; font-weight: bold; z-index: 10; }
         
         .controls { display: flex; flex-direction: column; gap: 10px; }
         button.action-btn { background: var(--primary); color: white; border: none; padding: 16px; border-radius: 10px; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
@@ -31,6 +31,13 @@
         select { flex: 1 1 45%; padding: 12px; border-radius: 8px; border: 1px solid #C6C6C8; background: white; font-size: 1rem; }
         .report-box { background: white; padding: 16px; border-radius: 12px; border: 1px solid #C6C6C8; white-space: pre-wrap; margin-top: 15px; min-height: 150px; font-size: 1.05rem; line-height: 1.5; }
         #capture-canvas { display: none; }
+
+        /* PREVIEW GALLERY STYLES */
+        .gallery-container { display: flex; flex-direction: column; gap: 15px; margin-bottom: 20px; }
+        .preview-item { position: relative; border-radius: 12px; overflow: hidden; border: 2px solid #C6C6C8; background: #000; }
+        .preview-item img { width: 100%; display: block; }
+        .delete-btn { position: absolute; top: 10px; right: 10px; background: rgba(255, 59, 48, 0.95); color: white; border: none; padding: 10px 15px; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
+        .preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -57,9 +64,24 @@
             </div>
             
             <div class="controls">
-                <button class="action-btn" onclick="capturePage()">📸 Scan & Add Page</button>
-                <button class="action-btn" style="background:#34C759;" onclick="processScan()">Next (Process Data)</button>
+                <button class="action-btn" onclick="capturePage()">📸 Snap Photo</button>
+                <button class="action-btn" style="background:#007AFF;" onclick="showPreview()">Review Images →</button>
                 <button class="secondary-btn" onclick="stopCamera(); switchView('dashboard-view');">Cancel</button>
+            </div>
+        </div>
+
+        <div id="preview-view" class="view">
+            <div class="preview-header">
+                <h3 style="margin:0;">Review Scans</h3>
+            </div>
+            
+            <div class="gallery-container" id="preview-gallery">
+                </div>
+
+            <div class="controls">
+                <button class="action-btn" style="background:#34C759;" onclick="startAIProcessing()">Confirm & Extract Data</button>
+                <button class="secondary-btn" onclick="switchView('scanner-view'); startCamera();">📸 Add More Pages</button>
+                <button class="secondary-btn" style="color: #FF3B30;" onclick="discardAll()">🗑️ Discard All & Cancel</button>
             </div>
         </div>
 
@@ -102,8 +124,7 @@
                 const video = document.getElementById('camera-stream');
                 video.srcObject = streamInstance;
                 video.play();
-                capturedImages = [];
-                document.getElementById('page-count').innerText = `Pages: 0`;
+                updatePageCount();
                 switchView('scanner-view');
             } catch (err) {
                 alert("Camera Error: " + err.message);
@@ -125,26 +146,66 @@
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
             capturedImages.push(canvas.toDataURL('image/jpeg'));
-            document.getElementById('page-count').innerText = `Pages: ${capturedImages.length}`;
+            updatePageCount();
             
             const wrapper = document.getElementById('camera-wrapper');
             wrapper.style.opacity = '0.2';
             setTimeout(() => { wrapper.style.opacity = '1'; }, 150);
         }
 
-        function processScan() {
+        function updatePageCount() {
+            document.getElementById('page-count').innerText = `Pages: ${capturedImages.length}`;
+        }
+
+        // --- NEW PREVIEW LOGIC ---
+        function showPreview() {
             if(capturedImages.length === 0) {
-                alert("Please scan at least one page first.");
+                alert("Please snap at least one photo first.");
                 return;
             }
             stopCamera();
+            renderGallery();
+            switchView('preview-view');
+        }
+
+        function renderGallery() {
+            const gallery = document.getElementById('preview-gallery');
+            gallery.innerHTML = '';
             
-            // 1. Force the loading screen to appear
+            capturedImages.forEach((imageSrc, index) => {
+                const div = document.createElement('div');
+                div.className = 'preview-item';
+                div.innerHTML = `
+                    <img src="${imageSrc}" alt="Scan ${index + 1}">
+                    <button class="delete-btn" onclick="deleteImage(${index})">🗑️ Delete</button>
+                `;
+                gallery.appendChild(div);
+            });
+        }
+
+        function deleteImage(index) {
+            capturedImages.splice(index, 1); // Remove image from array
+            updatePageCount();
+            if (capturedImages.length === 0) {
+                switchView('dashboard-view'); // Go back if no images left
+            } else {
+                renderGallery(); // Re-render the remaining images
+            }
+        }
+
+        function discardAll() {
+            capturedImages = [];
+            updatePageCount();
+            switchView('dashboard-view');
+        }
+        // -------------------------
+
+        function startAIProcessing() {
+            if(capturedImages.length === 0) return;
+            
             document.getElementById('loading-overlay').style.display = 'flex';
             detectedAbsentees = [];
 
-            // 2. SAFARI FIX: Wait 150 milliseconds for the screen to actually paint the black box
-            // before starting the heavy AI process, so it doesn't freeze the phone invisibly.
             setTimeout(async () => {
                 try {
                     const worker = await Tesseract.createWorker('eng');
@@ -163,7 +224,8 @@
                                 const fullRoll = rollMatch[0];
                                 const lastThree = fullRoll.slice(-3);
                                 
-                                if (rawText.includes(' A ') || rawText.endsWith(' A') || rawText.endsWith('A\n')) {
+                                // Checking for "A" indicating absent
+                                if (rawText.includes(' A ') || rawText.endsWith(' A') || rawText.endsWith('A\n') || rawText.includes('-A')) {
                                     if(!detectedAbsentees.includes(lastThree)) {
                                         detectedAbsentees.push(lastThree);
                                     }
@@ -176,14 +238,14 @@
                     document.getElementById('loading-overlay').style.display = 'none';
                     
                     if (detectedAbsentees.length === 0) {
-                        alert("The AI finished reading, but couldn't detect any absentees. Ensure the document is well-lit and Roll Numbers/Absents are clearly visible.");
+                        alert("The AI couldn't detect any absentees. Make sure the Roll Numbers and 'A' marks are perfectly legible in the preview window.");
                     }
                     
                     switchView('report-view');
 
                 } catch (error) {
                     document.getElementById('loading-overlay').style.display = 'none';
-                    alert("An error occurred while processing the image: " + error.message);
+                    alert("An error occurred: " + error.message);
                     switchView('dashboard-view');
                 }
             }, 150); 
