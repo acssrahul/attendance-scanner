@@ -3,89 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Attendance Scanner</title>
+    <title>Attendance AI Scanner</title>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         :root { --primary: #007AFF; --bg: #F2F2F7; --card: #FFFFFF; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); margin: 0; padding: 0; color: #000; }
         .header { background: var(--card); padding: 20px; text-align: center; font-weight: bold; font-size: 1.2rem; border-bottom: 1px solid #C6C6C8; }
         .container { padding: 16px; }
-        
-        /* Views */
         .view { display: none; }
         .view.active { display: block; }
         
-        /* Dashboard Buttons */
+        /* Dashboard & Camera */
         .menu-btn { background: var(--card); padding: 24px; margin-bottom: 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); display: flex; justify-content: space-between; align-items: center; font-size: 1.1rem; font-weight: 600; cursor: pointer; border: none; width: 100%; text-align: left; }
         .menu-btn span { color: var(--primary); }
-
-        /* Camera Scanner */
         #camera-wrapper { position: relative; width: 100%; border-radius: 12px; overflow: hidden; background: #000; margin-bottom: 15px; }
         #camera-stream { width: 100%; display: block; }
         .page-badge { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); color: white; padding: 6px 12px; border-radius: 15px; font-size: 0.9rem; font-weight: bold; }
         
-        /* Buttons */
+        /* Controls & Loaders */
         .controls { display: flex; flex-direction: column; gap: 10px; }
         button.action-btn { background: var(--primary); color: white; border: none; padding: 16px; border-radius: 10px; font-size: 1.1rem; font-weight: bold; cursor: pointer; }
         button.secondary-btn { background: #E5E5EA; color: #000; border: none; padding: 16px; border-radius: 10px; font-size: 1.1rem; cursor: pointer; font-weight: 600; }
+        
+        #loading-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); color: white; flex-direction: column; align-items: center; justify-content: center; z-index: 999; font-size: 1.2rem; font-weight: bold; text-align: center; padding: 20px;}
+        .spinner { border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid white; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin-bottom: 15px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
         /* Report Formats */
         .dropdown-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
         select { flex: 1 1 45%; padding: 12px; border-radius: 8px; border: 1px solid #C6C6C8; background: white; font-size: 1rem; }
         .report-box { background: white; padding: 16px; border-radius: 12px; border: 1px solid #C6C6C8; white-space: pre-wrap; margin-top: 15px; min-height: 150px; font-size: 1.05rem; line-height: 1.5; }
+        
+        /* Hidden Canvas for Image Processing */
+        #capture-canvas { display: none; }
     </style>
 </head>
 <body>
 
     <div class="header">Attendance Pilot</div>
 
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div id="loading-text">AI is reading the document...<br><span style="font-size:0.9rem; font-weight:normal;">This may take up to 30 seconds. Do not close the app.</span></div>
+    </div>
+
     <div class="container">
         <div id="dashboard-view" class="view active">
-            <button class="menu-btn" onclick="startCamera()">
-                📸 Mark Attendance <span>→</span>
-            </button>
-            <button class="menu-btn" onclick="switchView('logs-view')">
-                📂 Attendance Logs <span>→</span>
-            </button>
+            <button class="menu-btn" onclick="startCamera()">📸 Mark Attendance <span>→</span></button>
+            <button class="menu-btn" onclick="switchView('logs-view')">📂 Attendance Logs <span>→</span></button>
         </div>
 
         <div id="scanner-view" class="view">
             <h3>Scan Attendance Sheets</h3>
             <div id="camera-wrapper">
                 <video id="camera-stream" autoplay playsinline muted></video>
+                <canvas id="capture-canvas"></canvas>
                 <div id="page-count" class="page-badge">Pages: 0</div>
             </div>
             
             <div class="controls">
                 <button class="action-btn" onclick="capturePage()">📸 Scan & Add Page</button>
-                <button class="action-btn" style="background:#34C759;" onclick="processScan()">Next (Process)</button>
+                <button class="action-btn" style="background:#34C759;" onclick="processScan()">Next (Process Data)</button>
                 <button class="secondary-btn" onclick="stopCamera(); switchView('dashboard-view');">Cancel</button>
             </div>
         </div>
 
         <div id="report-view" class="view">
             <h3>Review & Generate Report</h3>
-            
             <div class="dropdown-group">
-                <select id="timeGreeting">
-                    <option value="Morning">Morning</option>
-                    <option value="Afternoon">Afternoon</option>
-                </select>
-                <select id="salutation">
-                    <option value="Sir">Sir</option>
-                    <option value="Mam">Mam</option>
-                </select>
-                <select id="scrClass">
-                    <option value="SCR 1.1">SCR 1.1</option>
-                    <option value="SCR 1.2">SCR 1.2</option>
-                    <option value="SCR 1.3">SCR 1.3</option>
-                    <option value="SCR 1.4">SCR 1.4</option>
-                </select>
+                <select id="timeGreeting"><option value="Morning">Morning</option><option value="Afternoon">Afternoon</option></select>
+                <select id="salutation"><option value="Sir">Sir</option><option value="Mam">Mam</option></select>
+                <select id="scrClass"><option value="SCR 1.1">SCR 1.1</option><option value="SCR 1.2">SCR 1.2</option><option value="SCR 1.3">SCR 1.3</option><option value="SCR 1.4">SCR 1.4</option></select>
             </div>
-
             <button class="action-btn" style="width:100%" onclick="generateFinalText()">Generate Final Report</button>
-
             <div class="report-box" id="finalReportOutput">Your compiled report will appear here...</div>
-            
             <div class="controls" style="margin-top: 15px;">
                 <button class="secondary-btn" onclick="switchView('dashboard-view')">Back to Dashboard</button>
             </div>
@@ -99,81 +90,123 @@
     </div>
 
     <script>
-        let scannedPages = 0;
+        let capturedImages = [];
         let streamInstance = null;
         let detectedAbsentees = [];
 
-        // Function to switch between the windows
         function switchView(viewId) {
             document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
             document.getElementById(viewId).classList.add('active');
         }
 
-        // Function to start the iPhone Camera
         async function startCamera() {
             try {
-                // Request back camera
                 streamInstance = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment" }
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
                 });
-                
                 const video = document.getElementById('camera-stream');
                 video.srcObject = streamInstance;
-                video.play(); // Force play for iOS
-                
-                scannedPages = 0;
-                document.getElementById('page-count').innerText = `Pages: ${scannedPages}`;
+                video.play();
+                capturedImages = [];
+                document.getElementById('page-count').innerText = `Pages: 0`;
                 switchView('scanner-view');
-                
             } catch (err) {
-                alert("Camera Error: " + err.message + "\n\nPlease ensure Camera is allowed in iPhone Settings -> Safari -> Camera.");
+                alert("Camera Error: " + err.message);
             }
         }
 
-        // Function to stop camera to save battery
         function stopCamera() {
             if (streamInstance) {
                 streamInstance.getTracks().forEach(track => track.stop());
             }
         }
 
-        // Simulate capturing a page (Adding pages until done)
         function capturePage() {
-            scannedPages++;
-            document.getElementById('page-count').innerText = `Pages: ${scannedPages}`;
+            const video = document.getElementById('camera-stream');
+            const canvas = document.getElementById('capture-canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            // Visual feedback (flash)
+            // Save image data
+            capturedImages.push(canvas.toDataURL('image/jpeg'));
+            document.getElementById('page-count').innerText = `Pages: ${capturedImages.length}`;
+            
+            // Flash effect
             const wrapper = document.getElementById('camera-wrapper');
             wrapper.style.opacity = '0.2';
             setTimeout(() => { wrapper.style.opacity = '1'; }, 150);
         }
 
-        // Hitting "Next" to process the images
-        function processScan() {
-            if(scannedPages === 0) {
+        async function processScan() {
+            if(capturedImages.length === 0) {
                 alert("Please scan at least one page first.");
                 return;
             }
             stopCamera();
-            
-            // --- AI/OCR PROCESSING PLACEHOLDER ---
-            // In a full production app, this is where the image is sent to an OCR engine.
-            // The engine looks at Col 1 (Serial), Col 2 (Roll No), and Col 3 (Ink Color).
-            // It filters Red Ink (Absent) and extracts the last 3 digits of the Roll No.
-            
-            // Simulating successful extraction for the demo:
-            detectedAbsentees = ["001", "002", "014", "022"]; 
-            
-            switchView('report-view');
+            document.getElementById('loading-overlay').style.display = 'flex';
+            detectedAbsentees = [];
+
+            try {
+                // Initialize the Tesseract AI Worker
+                const worker = await Tesseract.createWorker('eng');
+                
+                // Process each captured image
+                for (let i = 0; i < capturedImages.length; i++) {
+                    document.getElementById('loading-text').innerHTML = `AI is reading page ${i + 1} of ${capturedImages.length}...<br><span style="font-size:0.9rem; font-weight:normal;">This takes heavy processing power. Do not close the app.</span>`;
+                    
+                    const ret = await worker.recognize(capturedImages[i]);
+                    const textLines = ret.data.lines;
+
+                    // Search the text lines for Roll Numbers and Absent marks
+                    textLines.forEach(line => {
+                        const rawText = line.text.toUpperCase();
+                        
+                        // Look for a roll number (Assuming format like RA251002010001)
+                        // Adjust this regex if your roll numbers look different
+                        const rollMatch = rawText.match(/RA\d{12}/); 
+                        
+                        if (rollMatch) {
+                            const fullRoll = rollMatch[0];
+                            const lastThree = fullRoll.slice(-3); // Get the 001, 002
+                            
+                            // Simple logic: If the line contains "A", assume absent. 
+                            // *Note: This is imperfect without color detection*
+                            if (rawText.includes(' A ') || rawText.endsWith(' A') || rawText.endsWith('A\n')) {
+                                if(!detectedAbsentees.includes(lastThree)) {
+                                    detectedAbsentees.push(lastThree);
+                                }
+                            }
+                        }
+                    });
+                }
+                
+                await worker.terminate();
+                document.getElementById('loading-overlay').style.display = 'none';
+                
+                if (detectedAbsentees.length === 0) {
+                    alert("The AI finished reading, but couldn't detect any absentees. Ensure the document is well-lit and Roll Numbers/Absents are clearly visible.");
+                }
+                
+                switchView('report-view');
+
+            } catch (error) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                alert("An error occurred while processing the image: " + error.message);
+                switchView('dashboard-view');
+            }
         }
 
-        // Generating the final formatted text
         function generateFinalText() {
             const greeting = document.getElementById('timeGreeting').value;
             const salutation = document.getElementById('salutation').value;
             const scr = document.getElementById('scrClass').value;
             
-            const listStr = detectedAbsentees.join(', ');
+            // Sort the numbers chronologically
+            detectedAbsentees.sort();
+            
+            const listStr = detectedAbsentees.length > 0 ? detectedAbsentees.join(', ') : "None detected";
             const totalCount = detectedAbsentees.length;
 
             const textReport = `Good ${greeting} ${salutation},\n\nThe absentees of the class ${scr} are: ${listStr}\n\ntotal number of absentees count = ${totalCount}`;
