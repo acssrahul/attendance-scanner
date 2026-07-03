@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Attendance AI Scanner</title>
-    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
     <style>
         :root { --primary: #007AFF; --bg: #F2F2F7; --card: #FFFFFF; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg); margin: 0; padding: 0; color: #000; }
@@ -28,7 +27,7 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
         .dropdown-group { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
-        select { flex: 1 1 45%; padding: 12px; border-radius: 8px; border: 1px solid #C6C6C8; background: white; font-size: 1rem; }
+        select, input[type="date"], input[type="time"] { flex: 1 1 45%; padding: 12px; border-radius: 8px; border: 1px solid #C6C6C8; background: white; font-size: 1rem; font-family: inherit;}
         .report-box { background: white; padding: 16px; border-radius: 12px; border: 1px solid #C6C6C8; white-space: pre-wrap; margin-top: 15px; min-height: 150px; font-size: 1.05rem; line-height: 1.5; }
         #capture-canvas { display: none; }
 
@@ -38,15 +37,19 @@
         .preview-item img { width: 100%; display: block; }
         .delete-btn { position: absolute; top: 10px; right: 10px; background: rgba(255, 59, 48, 0.95); color: white; border: none; padding: 10px 15px; border-radius: 8px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.3); }
         .preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        
+        .datetime-card { background: white; padding: 15px; border-radius: 12px; border: 1px solid #C6C6C8; margin-bottom: 15px; }
+        .datetime-card label { font-weight: 600; display: block; margin-bottom: 5px; color: #333; font-size: 0.9rem;}
+        .time-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
     </style>
 </head>
 <body>
 
-    <div class="header">Attendance Pilot</div>
+    <div class="header">Attendance Pilot (Gemini AI)</div>
 
     <div id="loading-overlay">
         <div class="spinner"></div>
-        <div id="loading-text">AI is reading the document...<br><span style="font-size:0.9rem; font-weight:normal;">This may take up to 30 seconds. Do not close the app.</span></div>
+        <div id="loading-text">Gemini is analyzing the handwriting...<br><span style="font-size:0.9rem; font-weight:normal;">This usually takes 5 to 10 seconds.</span></div>
     </div>
 
     <div class="container">
@@ -72,27 +75,42 @@
 
         <div id="preview-view" class="view">
             <div class="preview-header">
-                <h3 style="margin:0;">Review Scans</h3>
+                <h3 style="margin:0;">Review & Setup</h3>
             </div>
             
-            <div class="gallery-container" id="preview-gallery">
+            <div class="datetime-card">
+                <label>Attendance Date:</label>
+                <input type="date" id="attDate" style="width: 90%;">
+                
+                <div class="time-row">
+                    <div style="flex:1;">
+                        <label>Start Time:</label>
+                        <input type="time" id="startTime" style="width: 80%;">
+                    </div>
+                    <div style="flex:1;">
+                        <label>End Time:</label>
+                        <input type="time" id="endTime" style="width: 80%;">
+                    </div>
                 </div>
+            </div>
+
+            <div class="gallery-container" id="preview-gallery"></div>
 
             <div class="controls">
-                <button class="action-btn" style="background:#34C759;" onclick="startAIProcessing()">Confirm & Extract Data</button>
+                <button class="action-btn" style="background:#34C759;" onclick="startGeminiAI()">Run Gemini AI Extraction</button>
                 <button class="secondary-btn" onclick="switchView('scanner-view'); startCamera();">📸 Add More Pages</button>
                 <button class="secondary-btn" style="color: #FF3B30;" onclick="discardAll()">🗑️ Discard All & Cancel</button>
             </div>
         </div>
 
         <div id="report-view" class="view">
-            <h3>Review & Generate Report</h3>
+            <h3>Final Report Generator</h3>
             <div class="dropdown-group">
                 <select id="timeGreeting"><option value="Morning">Morning</option><option value="Afternoon">Afternoon</option></select>
                 <select id="salutation"><option value="Sir">Sir</option><option value="Mam">Mam</option></select>
                 <select id="scrClass"><option value="SCR 1.1">SCR 1.1</option><option value="SCR 1.2">SCR 1.2</option><option value="SCR 1.3">SCR 1.3</option><option value="SCR 1.4">SCR 1.4</option></select>
             </div>
-            <button class="action-btn" style="width:100%" onclick="generateFinalText()">Generate Final Report</button>
+            <button class="action-btn" style="width:100%" onclick="generateFinalText()">Format Output</button>
             <div class="report-box" id="finalReportOutput">Your compiled report will appear here...</div>
             <div class="controls" style="margin-top: 15px;">
                 <button class="secondary-btn" onclick="switchView('dashboard-view')">Back to Dashboard</button>
@@ -110,6 +128,20 @@
         let capturedImages = [];
         let streamInstance = null;
         let detectedAbsentees = [];
+
+        // Pre-fill Date and Time based on current moment
+        function setDefaultDateTime() {
+            const now = new Date();
+            document.getElementById('attDate').valueAsDate = now;
+            
+            let hours = now.getHours();
+            // Start time is current hour, End time is next hour
+            document.getElementById('startTime').value = `${hours.toString().padStart(2, '0')}:00`;
+            document.getElementById('endTime').value = `${(hours + 1).toString().padStart(2, '0')}:00`;
+        }
+        
+        // Run immediately
+        setDefaultDateTime();
 
         function switchView(viewId) {
             document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
@@ -145,7 +177,7 @@
             const ctx = canvas.getContext('2d');
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             
-            capturedImages.push(canvas.toDataURL('image/jpeg'));
+            capturedImages.push(canvas.toDataURL('image/jpeg', 0.8)); // 0.8 compresses slightly for faster AI upload
             updatePageCount();
             
             const wrapper = document.getElementById('camera-wrapper');
@@ -153,16 +185,10 @@
             setTimeout(() => { wrapper.style.opacity = '1'; }, 150);
         }
 
-        function updatePageCount() {
-            document.getElementById('page-count').innerText = `Pages: ${capturedImages.length}`;
-        }
+        function updatePageCount() { document.getElementById('page-count').innerText = `Pages: ${capturedImages.length}`; }
 
-        // --- NEW PREVIEW LOGIC ---
         function showPreview() {
-            if(capturedImages.length === 0) {
-                alert("Please snap at least one photo first.");
-                return;
-            }
+            if(capturedImages.length === 0) { alert("Please snap at least one photo first."); return; }
             stopCamera();
             renderGallery();
             switchView('preview-view');
@@ -171,26 +197,18 @@
         function renderGallery() {
             const gallery = document.getElementById('preview-gallery');
             gallery.innerHTML = '';
-            
             capturedImages.forEach((imageSrc, index) => {
                 const div = document.createElement('div');
                 div.className = 'preview-item';
-                div.innerHTML = `
-                    <img src="${imageSrc}" alt="Scan ${index + 1}">
-                    <button class="delete-btn" onclick="deleteImage(${index})">🗑️ Delete</button>
-                `;
+                div.innerHTML = `<img src="${imageSrc}" alt="Scan ${index + 1}"><button class="delete-btn" onclick="deleteImage(${index})">🗑️ Delete</button>`;
                 gallery.appendChild(div);
             });
         }
 
         function deleteImage(index) {
-            capturedImages.splice(index, 1); // Remove image from array
+            capturedImages.splice(index, 1);
             updatePageCount();
-            if (capturedImages.length === 0) {
-                switchView('dashboard-view'); // Go back if no images left
-            } else {
-                renderGallery(); // Re-render the remaining images
-            }
+            if (capturedImages.length === 0) { switchView('dashboard-view'); } else { renderGallery(); }
         }
 
         function discardAll() {
@@ -198,57 +216,105 @@
             updatePageCount();
             switchView('dashboard-view');
         }
-        // -------------------------
 
-        function startAIProcessing() {
+        // --- GEMINI AI INTEGRATION ---
+        async function startGeminiAI() {
             if(capturedImages.length === 0) return;
             
+            // Check for API Key in local storage so you don't have to type it every time
+            let apiKey = localStorage.getItem('gemini_api_key');
+            if (!apiKey) {
+                apiKey = prompt("To connect to the Gemini Backend, please paste your free Google AI Studio API Key:");
+                if (apiKey) {
+                    localStorage.setItem('gemini_api_key', apiKey);
+                } else {
+                    return; // User cancelled
+                }
+            }
+
             document.getElementById('loading-overlay').style.display = 'flex';
             detectedAbsentees = [];
 
-            setTimeout(async () => {
-                try {
-                    const worker = await Tesseract.createWorker('eng');
-                    
-                    for (let i = 0; i < capturedImages.length; i++) {
-                        document.getElementById('loading-text').innerHTML = `AI is reading page ${i + 1} of ${capturedImages.length}...<br><span style="font-size:0.9rem; font-weight:normal;">This takes heavy processing power. Do not close the app.</span>`;
-                        
-                        const ret = await worker.recognize(capturedImages[i]);
-                        const textLines = ret.data.lines;
+            try {
+                // Prepare images for Gemini (strip the base64 prefix)
+                const imageParts = capturedImages.map(imgData => {
+                    return {
+                        inlineData: {
+                            mimeType: "image/jpeg",
+                            data: imgData.split(',')[1] 
+                        }
+                    };
+                });
 
-                        textLines.forEach(line => {
-                            const rawText = line.text.toUpperCase();
-                            const rollMatch = rawText.match(/RA\d{12}/); 
-                            
-                            if (rollMatch) {
-                                const fullRoll = rollMatch[0];
-                                const lastThree = fullRoll.slice(-3);
-                                
-                                // Checking for "A" indicating absent
-                                if (rawText.includes(' A ') || rawText.endsWith(' A') || rawText.endsWith('A\n') || rawText.includes('-A')) {
-                                    if(!detectedAbsentees.includes(lastThree)) {
-                                        detectedAbsentees.push(lastThree);
-                                    }
-                                }
-                            }
-                        });
-                    }
-                    
-                    await worker.terminate();
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    
-                    if (detectedAbsentees.length === 0) {
-                        alert("The AI couldn't detect any absentees. Make sure the Roll Numbers and 'A' marks are perfectly legible in the preview window.");
-                    }
-                    
-                    switchView('report-view');
+                // Give Gemini strict instructions
+                const promptText = `You are a strict data extraction AI. Look at these handwritten attendance sheets. 
+                Identify the students marked as Absent (usually marked with an 'A' or red ink). 
+                The roll numbers typically start with 'RA'. 
+                Extract the last 3 digits of the roll numbers for all absent students. 
+                Return ONLY a comma-separated list of the 3-digit numbers (e.g., 001, 014, 022). 
+                If absolutely no absentees are found, return the exact word "NONE".`;
 
-                } catch (error) {
-                    document.getElementById('loading-overlay').style.display = 'none';
-                    alert("An error occurred: " + error.message);
-                    switchView('dashboard-view');
+                const requestBody = {
+                    contents: [{ parts: [ { text: promptText }, ...imageParts ] }]
+                };
+
+                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error.message);
                 }
-            }, 150); 
+
+                // Parse my response
+                const aiResponse = data.candidates[0].content.parts[0].text.trim().toUpperCase();
+
+                if (aiResponse === "NONE" || aiResponse === "") {
+                    detectedAbsentees = [];
+                } else {
+                    // Split the comma string into a neat array
+                    detectedAbsentees = aiResponse.split(',').map(s => s.trim().replace(/[^0-9]/g, ''));
+                    // Filter out any empty strings if formatting got messy
+                    detectedAbsentees = detectedAbsentees.filter(item => item.length > 0);
+                }
+
+                document.getElementById('loading-overlay').style.display = 'none';
+                
+                if (detectedAbsentees.length === 0) {
+                    alert("Gemini analyzed the sheet and found NO absentees.");
+                }
+                
+                switchView('report-view');
+
+            } catch (error) {
+                document.getElementById('loading-overlay').style.display = 'none';
+                alert("Gemini API Error: " + error.message);
+                
+                // If the API key is wrong, delete it so it asks again next time
+                if(error.message.includes("API key not valid")) {
+                    localStorage.removeItem('gemini_api_key');
+                }
+            }
+        }
+
+        // Format Date to dd/mm/yyyy
+        function formatDisplayDate(dateString) {
+            const d = new Date(dateString);
+            return `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth() + 1).toString().padStart(2, '0')}/${d.getFullYear()}`;
+        }
+
+        // Format 24hr time to 12hr AM/PM for the final text
+        function formatAMPM(timeString) {
+            let [hours, minutes] = timeString.split(':');
+            hours = parseInt(hours);
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12;
+            hours = hours ? hours : 12; // the hour '0' should be '12'
+            return `${hours}:${minutes} ${ampm}`;
         }
 
         function generateFinalText() {
@@ -256,15 +322,23 @@
             const salutation = document.getElementById('salutation').value;
             const scr = document.getElementById('scrClass').value;
             
+            // Get Dates and Times
+            const rawDate = document.getElementById('attDate').value;
+            const formattedDate = formatDisplayDate(rawDate);
+            const startT = formatAMPM(document.getElementById('startTime').value);
+            const endT = formatAMPM(document.getElementById('endTime').value);
+            
             detectedAbsentees.sort();
-            const listStr = detectedAbsentees.length > 0 ? detectedAbsentees.join(', ') : "None detected";
-            const totalCount = detectedAbsentees.length;
+            // Remove duplicates just in case Gemini gets overzealous
+            const uniqueAbsentees = [...new Set(detectedAbsentees)];
+            
+            const listStr = uniqueAbsentees.length > 0 ? uniqueAbsentees.join(', ') : "None detected";
+            const totalCount = uniqueAbsentees.length;
 
-            const textReport = `Good ${greeting} ${salutation},\n\nThe absentees of the class ${scr} are: ${listStr}\n\ntotal number of absentees count = ${totalCount}`;
+            const textReport = `Good ${greeting} ${salutation},\n\nThe absentees of the class ${scr} on ${formattedDate} between ${startT} to ${endT} are:\n${listStr}\n\ntotal number of absentees count = ${totalCount}`;
             
             document.getElementById('finalReportOutput').innerText = textReport;
         }
     </script>
 </body>
 </html>
-
