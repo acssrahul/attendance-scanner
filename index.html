@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Attendance Scanner</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/4.1.1/tesseract.min.js"></script>
+    <style>
+        :root {
+            --primary: #007AFF;
+            --bg: #F2F2F7;
+            --card: #FFFFFF;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            margin: 0;
+            padding: 0;
+            color: #000;
+        }
+        .header {
+            background: var(--card);
+            padding: 20px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 1.2rem;
+            border-bottom: 1px solid #C6C6C8;
+        }
+        .container { padding: 16px; }
+        
+        /* Dashboard Windows */
+        .menu-btn {
+            background: var(--card);
+            padding: 24px;
+            margin-bottom: 16px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            width: 100%;
+            text-align: left;
+        }
+        .menu-btn span { color: var(--primary); }
+
+        /* Camera & Scanner View */
+        .view { display: none; }
+        .view.active { display: block; }
+        
+        #camera-stream {
+            width: 100%;
+            border-radius: 12px;
+            background: #000;
+            transform: scaleX(1);
+        }
+        .controls {
+            margin-top: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        button.action-btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button.secondary-btn {
+            background: #E5E5EA;
+            color: #000;
+            border: none;
+            padding: 14px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+        }
+
+        /* Report Formats */
+        .dropdown-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        select {
+            flex: 1;
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #C6C6C8;
+            background: white;
+            font-size: 1rem;
+        }
+        .report-box {
+            background: white;
+            padding: 16px;
+            border-radius: 12px;
+            border: 1px solid #C6C6C8;
+            white-space: pre-wrap;
+            font-family: monospace;
+            margin-top: 15px;
+        }
+        .page-badge {
+            background: #34C759;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 10px;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">Attendance Pilot</div>
+
+    <div class="container">
+        <div id="dashboard-view" class="view active">
+            <button class="menu-btn" onclick="switchView('scanner-view'); startCamera();">
+                📸 Mark Attendance <span>→</span>
+            </button>
+            <button class="menu-btn" onclick="switchView('logs-view')">
+                📂 Attendance Logs <span>→</span>
+            </button>
+        </div>
+
+        <div id="scanner-view" class="view">
+            <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+                <h3>Scan Sheet</h3>
+                <span id="page-count" class="page-badge">Pages: 0</span>
+            </div>
+            <video id="camera-stream" autoplay playsinline></video>
+            <canvas id="capture-canvas" style="display:none;"></canvas>
+            
+            <div class="controls">
+                <button class="action-btn" onclick="capturePage()">Capture & Scan Page</button>
+                <button class="action-btn" style="background:#34C759;" onclick="processAllPages()">Next (Process Data)</button>
+                <button class="secondary-btn" onclick="stopCamera(); switchView('dashboard-view');">Cancel</button>
+            </div>
+        </div>
+
+        <div id="report-view" class="view">
+            <h3>Generate Final Report</h3>
+            
+            <div class="dropdown-group">
+                <select id="timeGreeting">
+                    <option value="Morning">Morning</option>
+                    <option value="Afternoon">Afternoon</option>
+                </select>
+                <select id="salutation">
+                    <option value="Sir">Sir</option>
+                    <option value="Mam">Mam</option>
+                </select>
+                <select id="scrClass">
+                    <option value="SCR 1.1">SCR 1.1</option>
+                    <option value="SCR 1.2">SCR 1.2</option>
+                    <option value="SCR 1.3">SCR 1.3</option>
+                    <option value="SCR 1.4">SCR 1.4</option>
+                </select>
+            </div>
+
+            <button class="action-btn" style="width:100%" onclick="generateFinalText()">Compile Report</button>
+
+            <div class="report-box" id="finalReportOutput">Your compiled report will show up here...</div>
+            
+            <div class="controls">
+                <button class="secondary-btn" onclick="switchView('dashboard-view')">Back to Dashboard</button>
+            </div>
+        </div>
+
+        <div id="logs-view" class="view">
+            <h3>Attendance Logs</h3>
+            <p style="color:#666;">No historical logs found.</p>
+            <button class="secondary-btn" onclick="switchView('dashboard-view')">Back</button>
+        </div>
+    </div>
+
+    <script>
+        let scannedPages = [];
+        let streamInstance = null;
+        let detectedAbsentees = []; // Mocking list for structural demo initially
+
+        function switchView(viewId) {
+            document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+            document.getElementById(viewId).classList.add('active');
+        }
+
+        async function startCamera() {
+            const video = document.getElementById('camera-stream');
+            try {
+                streamInstance = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }
+                });
+                video.srcObject = streamInstance;
+            } catch (err) {
+                alert("Camera access denied or unavailable: " + err);
+            }
+        }
+
+        function stopCamera() {
+            if (streamInstance) {
+                streamInstance.getTracks().forEach(track => track.stop());
+            }
+        }
+
+        function capturePage() {
+            const video = document.getElementById('camera-stream');
+            const canvas = document.getElementById('capture-canvas');
+            const ctx = canvas.getContext('2d');
+
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Save the captured frame image URL string
+            const dataUrl = canvas.toDataURL('image/jpeg');
+            scannedPages.push(dataUrl);
+            
+            document.getElementById('page-count').innerText = `Pages: ${scannedPages.length}`;
+            alert("Page captured successfully!");
+        }
+
+        function processAllPages() {
+            stopCamera();
+            if(scannedPages.length === 0) {
+                alert("Please scan at least one page first.");
+                switchView('dashboard-view');
+                return;
+            }
+            
+            // Simulating OCR parsing breakdown logic for Blue/Red alignment 
+            // In a live environment, canvas image pixel scanning isolates columns.
+            // Mock sample output matching user format criteria for execution demonstration:
+            detectedAbsentees = ["001", "002", "014", "022"]; 
+            
+            switchView('report-view');
+        }
+
+        function generateFinalText() {
+            const greeting = document.getElementById('timeGreeting').value;
+            const salutation = document.getElementById('salutation').value;
+            const scr = document.getElementById('scrClass').value;
+            
+            const listStr = detectedAbsentees.join(', ');
+            const totalCount = detectedAbsentees.length;
+
+            const textReport = `Good ${greeting} ${salutation},\n\nThe absentees of the class ${scr} are:\n${listStr}\n\nTotal number of absentees count = ${totalCount}`;
+            
+            document.getElementById('finalReportOutput').innerText = textReport;
+        }
+    </script>
+</body>
+</html>
